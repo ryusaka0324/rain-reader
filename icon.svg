@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#11172a"/>
+      <stop offset="1" stop-color="#0a0e1a"/>
+    </linearGradient>
+    <linearGradient id="cloud" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9ec3ff"/>
+      <stop offset="1" stop-color="#6fb3ff"/>
+    </linearGradient>
+    <linearGradient id="rain" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6fb3ff"/>
+      <stop offset="1" stop-color="#4f8cff"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Rounded square background -->
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- Subtle inner glow -->
+  <rect x="2" y="2" width="508" height="508" rx="110" fill="none" stroke="rgba(111,179,255,0.08)" stroke-width="2"/>
+
+  <!-- Cloud (centered, slightly upper) -->
+  <g transform="translate(256 230)">
+    <path d="M -110 30
+             a 60 60 0 0 1 24 -118
+             a 78 78 0 0 1 150 12
+             a 50 50 0 0 1 6 100
+             Z"
+          fill="url(#cloud)"
+          stroke="rgba(255,255,255,0.18)"
+          stroke-width="2"
+          stroke-linejoin="round"/>
+  </g>
+
+  <!-- Rain drops -->
+  <g stroke="url(#rain)" stroke-width="14" stroke-linecap="round" fill="none">
+    <line x1="190" y1="320" x2="170" y2="380"/>
+    <line x1="248" y1="320" x2="228" y2="400"/>
+    <line x1="306" y1="320" x2="286" y2="380"/>
+    <line x1="356" y1="320" x2="336" y2="400"/>
+  </g>
+</svg>
