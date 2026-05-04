@@ -19,6 +19,7 @@
 
   const PLAY_INTERVAL_MS = 600;
   const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 min
+  const RAIN_OPACITY = 0.78;
 
   // ---- DOM ------------------------------------------------------------------
 
@@ -28,17 +29,27 @@
     timeStatus: $('#time-status'),
     timeMain: $('#time-main'),
     timeDate: $('#time-date'),
+    frameOffset: $('#frame-offset'),
+    lastUpdated: $('#last-updated'),
+    latestObserved: $('#latest-observed'),
+    dataHealth: $('#data-health'),
+    netBanner: $('#net-banner'),
     track: $('#timeline-track'),
     thumbs: $('#track-thumbs'),
     playBtn: $('#play-btn'),
     playIcon: $('#play-icon'),
     pauseIcon: $('#pause-icon'),
+    jumpNow: $('#jump-now'),
     stepBack: $('#step-back'),
     stepFwd: $('#step-forward'),
+    refreshBtn: $('#refresh-btn'),
     locateBtn: $('#locate-btn'),
     infoBtn: $('#info-btn'),
     infoModal: $('#info-modal'),
     loader: $('#loader'),
+    loaderText: $('#loader .loader-text'),
+    loaderRetry: $('#loader-retry'),
+    toast: $('#toast'),
   };
 
   // ---- State ----------------------------------------------------------------
@@ -54,6 +65,9 @@
     isPlaying: false,
     playTimer: null,
     refreshTimer: null,
+    isRefreshing: false,
+    lastUpdatedAt: null,
+    toastTimer: null,
   };
 
   // ---- Time parsing ---------------------------------------------------------
@@ -74,6 +88,7 @@
       hour: '2-digit', minute: '2-digit', hour12: false,
     });
   }
+
   function fmtDate(date) {
     const y = date.getFullYear();
     const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -82,10 +97,16 @@
     return `${y}/${m}/${d} (${wd})`;
   }
 
+  function formatSignedMinutes(mins) {
+    if (mins === 0) return '現在';
+    if (mins < 0) return `${Math.abs(mins)}分前`;
+    return `${mins}分後`;
+  }
+
   // ---- Fetch frames ---------------------------------------------------------
 
   async function fetchJSON(url) {
-    const res = await fetch(`${url}?t=${Date.now()}`);
+    const res = await fetch(`${url}?t=${Date.now()}`, { cache: 'no-store' });
     if (!res.ok) throw new Error(`fetch ${url} -> ${res.status}`);
     return res.json();
   }
@@ -96,7 +117,7 @@
       fetchJSON(N2_URL),
     ]);
 
-    // N1 is reverse-chronological — sort ascending by validtime
+    // N1 is reverse-chronological — sort ascending by validtime.
     const past = [...n1raw]
       .sort((a, b) => a.validtime.localeCompare(b.validtime))
       .map((f) => ({
@@ -105,7 +126,7 @@
         isForecast: false,
       }));
 
-    // N2: forecast frames; sort ascending by validtime, dedupe
+    // N2: forecast frames; sort ascending by validtime, dedupe.
     const seen = new Set(past.map((f) => f.validtime));
     const future = [...n2raw]
       .sort((a, b) => a.validtime.localeCompare(b.validtime))
@@ -116,13 +137,16 @@
         isForecast: true,
       }));
 
-    // Trim past to ~last 60 minutes (avoid loading too much)
-    const trimmedPast = past.slice(-13); // 12 frames @ 5min ≈ 60min + current
-
+    // Trim past to ~last 60 minutes (12 frames @ 5min + current).
+    const trimmedPast = past.slice(-13);
     const frames = [...trimmedPast, ...future];
-    const nowIdx = trimmedPast.length - 1;
+    const nowIdx = Math.max(0, trimmedPast.length - 1);
 
-    return { frames, nowIdx };
+    if (frames.length === 0) {
+      throw new Error('JMA nowcast returned no frames');
+    }
+
+    return { frames, nowIdx, fetchedAt: new Date() };
   }
 
   // ---- Map ------------------------------------------------------------------
@@ -139,28 +163,26 @@
       preferCanvas: false,
     });
 
-    // Basemap (lightly desaturated via CSS filter)
     const basemap = L.tileLayer(GSI_PALE, {
       attribution: '地理院タイル',
       maxZoom: 18,
       className: 'basemap-layer',
     });
     basemap.addTo(state.map);
-
-    // Show legend zoom-control attribution position
     state.map.attributionControl.setPrefix('');
   }
 
   function buildNowcastLayer(frame) {
     const url = TILE_TPL(frame.basetime, frame.validtime);
     return L.tileLayer(url, {
-      opacity: 0,                  // start transparent for crossfade
+      opacity: 0,
       attribution: '気象庁ナウキャスト',
       maxNativeZoom: 10,
       maxZoom: 12,
       minZoom: 4,
       tileSize: 256,
       crossOrigin: false,
+      errorTileUrl: '',
     });
   }
 
@@ -175,7 +197,6 @@
       state.layers.set(idx, layer);
     }
 
-    // Add new layer below current, then fade
     if (!state.map.hasLayer(layer)) {
       layer.addTo(state.map);
     }
@@ -183,24 +204,19 @@
     const prev = state.activeLayer;
     state.activeLayer = layer;
 
-    // Crossfade
-    const targetOpacity = 0.78;
     if (animate) {
-      // Animate via rAF for smoothness
-      fadeLayer(layer, targetOpacity, 220);
+      fadeLayer(layer, RAIN_OPACITY, 220);
       if (prev && prev !== layer) {
-        fadeLayer(prev, 0, 220, () => {
-          // Optionally remove very old layers from map (keep cached)
-          // Keep them on the map but invisible to avoid re-fetches
-        });
+        fadeLayer(prev, 0, 220);
       }
     } else {
-      layer.setOpacity(targetOpacity);
+      layer.setOpacity(RAIN_OPACITY);
       if (prev && prev !== layer) prev.setOpacity(0);
     }
 
     updateTimeDisplay(frame);
     updateActiveTick(idx);
+    updateStepButtons();
   }
 
   function fadeLayer(layer, target, duration, done) {
@@ -220,21 +236,43 @@
 
   function updateTimeDisplay(frame) {
     const date = parseJmaTime(frame.validtime);
-    const localTime = fmtTime(date);
-    const localDate = fmtDate(date);
+    const nowFrame = state.frames[state.nowIdx];
+    const nowDate = nowFrame ? parseJmaTime(nowFrame.validtime) : date;
+    const diffMin = Math.round((date - nowDate) / 60000);
 
-    els.timeMain.textContent = localTime;
-    els.timeDate.textContent = localDate;
+    els.timeMain.textContent = fmtTime(date);
+    els.timeDate.textContent = fmtDate(date);
 
     if (frame.isForecast) {
       els.timeStatus.textContent = '予報';
       els.timeStatus.classList.add('is-forecast');
-    } else if (state.frames.indexOf(frame) === state.nowIdx) {
+    } else if (state.currentIdx === state.nowIdx) {
       els.timeStatus.textContent = '実況・現在';
       els.timeStatus.classList.remove('is-forecast');
     } else {
       els.timeStatus.textContent = '実況';
       els.timeStatus.classList.remove('is-forecast');
+    }
+
+    els.frameOffset.textContent = formatSignedMinutes(diffMin);
+    els.frameOffset.classList.toggle('is-now', diffMin === 0);
+    els.frameOffset.classList.toggle('is-forecast', diffMin > 0);
+    els.jumpNow.classList.toggle('is-active', state.currentIdx === state.nowIdx);
+  }
+
+  function updateDataPanel({ kind = 'ok', text = '最新', fetchedAt = state.lastUpdatedAt } = {}) {
+    els.dataHealth.textContent = text;
+    els.dataHealth.classList.toggle('is-loading', kind === 'loading');
+    els.dataHealth.classList.toggle('is-warn', kind === 'warn');
+    els.dataHealth.classList.toggle('is-error', kind === 'error');
+
+    if (fetchedAt) {
+      els.lastUpdated.textContent = fmtTime(fetchedAt);
+    }
+
+    const latest = state.frames[state.nowIdx];
+    if (latest) {
+      els.latestObserved.textContent = fmtTime(parseJmaTime(latest.validtime));
     }
   }
 
@@ -247,7 +285,7 @@
       const tick = document.createElement('button');
       tick.type = 'button';
       tick.className = 'tick' + (f.isForecast ? ' is-forecast' : '');
-      const pct = (i / (total - 1)) * 100;
+      const pct = total === 1 ? 0 : (i / (total - 1)) * 100;
       tick.style.left = `${pct}%`;
       const date = parseJmaTime(f.validtime);
       tick.setAttribute('aria-label', `${fmtTime(date)} ${f.isForecast ? '予報' : '実況'}`);
@@ -260,7 +298,6 @@
       els.thumbs.appendChild(tick);
     });
 
-    // Position the "NOW" line marker
     const nowEl = document.getElementById('track-now');
     if (nowEl && total > 1) {
       const pct = (state.nowIdx / (total - 1)) * 100;
@@ -268,7 +305,6 @@
       nowEl.style.transform = 'translateX(-50%)';
     }
 
-    // Update track-line gradient stop based on now position
     const trackLine = document.querySelector('.track-line');
     if (trackLine && total > 1) {
       const pct = (state.nowIdx / (total - 1)) * 100;
@@ -281,7 +317,33 @@
     const ticks = els.thumbs.querySelectorAll('.tick');
     ticks.forEach((t, i) => {
       t.classList.toggle('is-active', i === idx);
+      if (i === idx) t.setAttribute('aria-current', 'true');
+      else t.removeAttribute('aria-current');
     });
+  }
+
+  function updateStepButtons() {
+    els.stepBack.disabled = state.currentIdx <= 0;
+    els.stepFwd.disabled = state.currentIdx >= state.frames.length - 1;
+  }
+
+  function showToast(message, type = '') {
+    clearTimeout(state.toastTimer);
+    els.toast.textContent = message;
+    els.toast.classList.toggle('is-error', type === 'error');
+    els.toast.classList.toggle('is-success', type === 'success');
+    els.toast.hidden = false;
+    state.toastTimer = setTimeout(() => {
+      els.toast.hidden = true;
+    }, 2600);
+  }
+
+  function updateNetworkBanner() {
+    if (!els.netBanner) return;
+    els.netBanner.hidden = navigator.onLine;
+    if (!navigator.onLine) {
+      updateDataPanel({ kind: 'warn', text: 'オフライン' });
+    }
   }
 
   // ---- Track interaction (drag to scrub) ------------------------------------
@@ -299,7 +361,6 @@
     }
 
     function onDown(e) {
-      // Ignore clicks on tick buttons themselves (handled separately)
       if (e.target.classList.contains('tick')) return;
       isDragging = true;
       stopPlaying();
@@ -332,14 +393,13 @@
     els.pauseIcon.style.display = '';
     els.playBtn.setAttribute('aria-label', '一時停止');
 
-    // If at the end, restart from beginning
     if (state.currentIdx >= state.frames.length - 1) {
       showFrame(0);
     }
 
     state.playTimer = setInterval(() => {
       let next = state.currentIdx + 1;
-      if (next >= state.frames.length) next = 0;  // loop
+      if (next >= state.frames.length) next = 0;
       showFrame(next);
     }, PLAY_INTERVAL_MS);
   }
@@ -363,7 +423,7 @@
 
   function locate() {
     if (!('geolocation' in navigator)) {
-      alert('このブラウザは位置情報に対応していません。');
+      showToast('このブラウザは位置情報に対応していません。', 'error');
       return;
     }
     els.locateBtn.classList.add('is-active');
@@ -385,13 +445,14 @@
             icon, interactive: false,
           }).addTo(state.map);
         }
+        showToast('現在地に移動しました。', 'success');
       },
       (err) => {
         els.locateBtn.classList.remove('is-active');
         const msg = err.code === 1
           ? '位置情報の使用が許可されていません。'
           : '位置情報を取得できませんでした。';
-        alert(msg);
+        showToast(msg, 'error');
       },
       { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
     );
@@ -415,10 +476,16 @@
     });
   }
 
-  // ---- Wire up controls -----------------------------------------------------
+  // ---- Controls -------------------------------------------------------------
+
+  function jumpToNow() {
+    stopPlaying();
+    showFrame(state.nowIdx);
+  }
 
   function setupControls() {
     els.playBtn.addEventListener('click', togglePlay);
+    els.jumpNow.addEventListener('click', jumpToNow);
     els.stepBack.addEventListener('click', () => {
       stopPlaying();
       showFrame(Math.max(0, state.currentIdx - 1));
@@ -428,48 +495,109 @@
       showFrame(Math.min(state.frames.length - 1, state.currentIdx + 1));
     });
     els.locateBtn.addEventListener('click', locate);
+    els.refreshBtn.addEventListener('click', () => refresh({ manual: true }));
+    els.loaderRetry.addEventListener('click', () => refresh({ manual: true, initial: true, jumpToLatest: true }));
 
-    // Keyboard
+    window.addEventListener('online', () => {
+      updateNetworkBanner();
+      refresh({ manual: true });
+    });
+    window.addEventListener('offline', updateNetworkBanner);
+
     document.addEventListener('keydown', (e) => {
-      if (e.target.matches('input, textarea')) return;
+      if (e.target.matches('input, textarea, button, a')) return;
       if (e.key === ' ') { e.preventDefault(); togglePlay(); }
       else if (e.key === 'ArrowLeft')  { stopPlaying(); showFrame(Math.max(0, state.currentIdx - 1)); }
       else if (e.key === 'ArrowRight') { stopPlaying(); showFrame(Math.min(state.frames.length - 1, state.currentIdx + 1)); }
+      else if (e.key === 'Home') { jumpToNow(); }
+      else if (e.key.toLowerCase() === 'r') { refresh({ manual: true }); }
     });
   }
 
   // ---- Refresh loop ---------------------------------------------------------
 
-  async function refresh() {
+  function chooseTargetIndex(newFrames, newNowIdx, { jumpToLatest = false } = {}) {
+    if (jumpToLatest || state.activeLayer === null || state.currentIdx === state.nowIdx) {
+      return newNowIdx;
+    }
+
+    const current = state.frames[state.currentIdx];
+    if (!current) return newNowIdx;
+
+    const exact = newFrames.findIndex((f) => f.validtime === current.validtime);
+    if (exact >= 0) return exact;
+
+    const currentDate = parseJmaTime(current.validtime);
+    let bestIdx = newNowIdx;
+    let bestDiff = Infinity;
+    newFrames.forEach((f, i) => {
+      const diff = Math.abs(parseJmaTime(f.validtime) - currentDate);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        bestIdx = i;
+      }
+    });
+    return bestIdx;
+  }
+
+  async function refresh({ manual = false, initial = false, jumpToLatest = false } = {}) {
+    if (state.isRefreshing) return;
+
+    if (!navigator.onLine) {
+      updateNetworkBanner();
+      showToast('オフラインのため、雨雲データを再取得できません。', 'error');
+      if (initial) {
+        els.loaderText.textContent = 'オフラインです。通信復旧後に再読み込みしてください。';
+        els.loaderRetry.hidden = false;
+      }
+      return;
+    }
+
+    state.isRefreshing = true;
+    els.refreshBtn.classList.add('is-loading');
+    els.loaderRetry.hidden = true;
+    updateDataPanel({ kind: 'loading', text: '更新中' });
+    if (initial) els.loaderText.textContent = '雨雲データを読み込み中…';
+
     try {
-      const { frames, nowIdx } = await loadFrames();
-      // Discard cached layers no longer matching
+      const { frames, nowIdx, fetchedAt } = await loadFrames();
+      const targetIdx = chooseTargetIndex(frames, nowIdx, { jumpToLatest });
       const oldLayers = state.layers;
+      const prevActive = state.activeLayer;
+
       state.layers = new Map();
       state.frames = frames;
       state.nowIdx = nowIdx;
-
-      // Default to "now"
-      const targetIdx = state.currentIdx === 0 && state.activeLayer === null
-        ? nowIdx
-        : Math.min(state.currentIdx, frames.length - 1);
+      state.lastUpdatedAt = fetchedAt;
+      state.activeLayer = null;
 
       renderTrack();
-      // Snap activeLayer to null so showFrame creates fresh
-      const prevActive = state.activeLayer;
-      state.activeLayer = null;
       showFrame(targetIdx, { animate: false });
-      // Clean up: remove old layers after a moment
+      updateDataPanel({ kind: 'ok', text: '最新', fetchedAt });
+      els.loader.classList.add('is-hidden');
+
       setTimeout(() => {
         oldLayers.forEach((layer) => {
           if (state.map.hasLayer(layer)) state.map.removeLayer(layer);
         });
-        if (prevActive && state.map.hasLayer(prevActive)) {
-          state.map.removeLayer(prevActive);
-        }
+        if (prevActive && state.map.hasLayer(prevActive)) state.map.removeLayer(prevActive);
       }, 500);
+
+      if (manual && !initial) showToast('雨雲データを更新しました。', 'success');
     } catch (err) {
       console.error('refresh failed', err);
+      updateDataPanel({ kind: state.frames.length ? 'warn' : 'error', text: state.frames.length ? '更新失敗' : '取得失敗' });
+      if (initial || state.frames.length === 0) {
+        els.loader.classList.remove('is-hidden');
+        els.loaderText.textContent = '雨雲データを取得できませんでした。通信状態を確認して再読み込みしてください。';
+        els.loaderRetry.hidden = false;
+      } else {
+        showToast('雨雲データの更新に失敗しました。表示中のデータを維持します。', 'error');
+      }
+    } finally {
+      state.isRefreshing = false;
+      els.refreshBtn.classList.remove('is-loading');
+      updateNetworkBanner();
     }
   }
 
@@ -480,22 +608,11 @@
     setupControls();
     setupTrackInteraction();
     setupModal();
+    updateNetworkBanner();
+    updateStepButtons();
 
-    try {
-      const { frames, nowIdx } = await loadFrames();
-      state.frames = frames;
-      state.nowIdx = nowIdx;
-      renderTrack();
-      showFrame(nowIdx, { animate: false });
-      els.loader.classList.add('is-hidden');
-    } catch (err) {
-      console.error(err);
-      els.loader.querySelector('.loader-text').textContent =
-        '雨雲データを取得できませんでした。時間をおいて再読込してください。';
-    }
-
-    // Periodic refresh
-    state.refreshTimer = setInterval(refresh, REFRESH_INTERVAL_MS);
+    await refresh({ initial: true, jumpToLatest: true });
+    state.refreshTimer = setInterval(() => refresh(), REFRESH_INTERVAL_MS);
   }
 
   if (document.readyState === 'loading') {

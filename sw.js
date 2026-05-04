@@ -6,9 +6,10 @@
    - GSI basemap tiles: Stale While Revalidate
    ============================================================ */
 
-const VERSION = 'v1.0.0';
+const VERSION = 'v1.1.0';
 const SHELL_CACHE = `rain-radar-shell-${VERSION}`;
 const BASEMAP_CACHE = `rain-radar-basemap-${VERSION}`;
+const MAX_BASEMAP_ENTRIES = 420;
 
 const SHELL_ASSETS = [
   './',
@@ -20,6 +21,8 @@ const SHELL_ASSETS = [
   './icon-192.png',
   './icon-512.png',
   './apple-touch-icon.png',
+  './icon-maskable-512.png',
+  './404.html',
   // Leaflet CDN
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
@@ -119,8 +122,20 @@ async function staleWhileRevalidate(req, cacheName) {
   const cache = await caches.open(cacheName);
   const cached = await cache.match(req);
   const networkPromise = fetch(req).then((res) => {
-    if (res && res.ok) cache.put(req, res.clone());
+    if (res && (res.ok || res.type === 'opaque')) {
+      cache.put(req, res.clone()).then(() => trimCache(cacheName, MAX_BASEMAP_ENTRIES));
+    }
     return res;
   }).catch(() => null);
-  return cached || networkPromise || fetch(req);
+
+  if (cached) return cached;
+  const network = await networkPromise;
+  return network || Response.error();
+}
+
+async function trimCache(cacheName, maxEntries) {
+  const cache = await caches.open(cacheName);
+  const keys = await cache.keys();
+  if (keys.length <= maxEntries) return;
+  await Promise.all(keys.slice(0, keys.length - maxEntries).map((key) => cache.delete(key)));
 }

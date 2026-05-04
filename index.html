@@ -42,6 +42,14 @@
     </div>
 
     <div class="topbar-actions">
+      <button id="refresh-btn" class="icon-btn" type="button" title="雨雲データを再取得" aria-label="雨雲データを再取得">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12a9 9 0 0 1-15.3 6.4"/>
+          <path d="M3 12a9 9 0 0 1 15.3-6.4"/>
+          <path d="M18 3v4h-4"/>
+          <path d="M6 21v-4h4"/>
+        </svg>
+      </button>
       <button id="locate-btn" class="icon-btn" type="button" title="現在地" aria-label="現在地に移動">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="3"/>
@@ -57,6 +65,25 @@
       </button>
     </div>
   </header>
+
+  <!-- Data status -->
+  <aside class="status-panel" aria-label="雨雲データの状態">
+    <div class="status-chip" id="data-health">確認中</div>
+    <dl>
+      <div>
+        <dt>最終更新</dt>
+        <dd id="last-updated">--:--</dd>
+      </div>
+      <div>
+        <dt>最新実況</dt>
+        <dd id="latest-observed">--:--</dd>
+      </div>
+    </dl>
+  </aside>
+
+  <div class="net-banner" id="net-banner" hidden role="status" aria-live="polite">
+    オフラインです。雨雲データは更新されません。
+  </div>
 
   <!-- Legend -->
   <aside class="legend" aria-label="降水強度の凡例">
@@ -78,8 +105,10 @@
         <div class="time-status" id="time-status">実況</div>
         <div class="time-main" id="time-main">--:--</div>
         <div class="time-date" id="time-date">----/--/--</div>
+        <div class="time-meta" id="frame-offset">現在から --分</div>
       </div>
       <div class="timeline-controls">
+        <button id="jump-now" class="ctrl-btn ctrl-btn-text" type="button" aria-label="現在時刻の雨雲へ戻る">現在へ</button>
         <button id="step-back" class="ctrl-btn" type="button" aria-label="5分戻る">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
@@ -109,9 +138,14 @@
 
   <!-- Loading -->
   <div class="loader" id="loader" role="status" aria-live="polite">
-    <div class="loader-ring"></div>
-    <div class="loader-text">雨雲データを読み込み中…</div>
+    <div class="loader-card">
+      <div class="loader-ring"></div>
+      <div class="loader-text">雨雲データを読み込み中…</div>
+      <button id="loader-retry" class="loader-retry" type="button" hidden>再読み込み</button>
+    </div>
   </div>
+
+  <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
 
   <!-- Info dialog -->
   <div class="modal" id="info-modal" hidden>
@@ -125,13 +159,15 @@
       <ul>
         <li><strong>スライダー</strong>を左右にドラッグして時刻を選択</li>
         <li><strong>▶ ボタン</strong>でアニメーション再生</li>
+        <li><strong>現在へ</strong>で最新の実況時刻へ復帰</li>
+        <li><strong>↻ ボタン</strong>で雨雲データを再取得</li>
         <li><strong>◎ ボタン</strong>で現在地に移動</li>
       </ul>
 
       <h3>データ出典</h3>
       <p>降水ナウキャスト・高解像度降水ナウキャスト：<a href="https://www.jma.go.jp/bosai/nowc/" target="_blank" rel="noopener">気象庁</a><br>背景地図：<a href="https://maps.gsi.go.jp/" target="_blank" rel="noopener">国土地理院 地理院タイル</a></p>
 
-      <p class="modal-foot">予報業務にあたる利用は禁じられています。詳しくは<a href="https://www.jma.go.jp/jma/kishou/info/coment.html" target="_blank" rel="noopener">気象庁HPの利用規約</a>を参照。</p>
+      <p class="modal-foot">本アプリは参考情報の表示を目的としたものです。防災・業務判断・生命身体に関わる判断には使用しないでください。予報業務にあたる利用は禁じられています。詳しくは<a href="https://www.jma.go.jp/jma/kishou/info/coment.html" target="_blank" rel="noopener">気象庁HPの利用規約</a>を参照。</p>
     </div>
   </div>
 
