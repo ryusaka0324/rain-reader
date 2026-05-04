@@ -2,11 +2,11 @@
    Service Worker — Rain Radar
    Strategy:
    - App shell (HTML/CSS/JS, icons, Leaflet CDN): Cache First
-   - JMA nowcast tiles & targetTimes JSON: Network Only (always fresh)
+   - JMA nowcast/RASRF tiles & targetTimes JSON: Network Only (always fresh)
    - GSI basemap tiles: Stale While Revalidate
    ============================================================ */
 
-const VERSION = 'v1.1.0';
+const VERSION = 'v1.3.0';
 const SHELL_CACHE = `rain-radar-shell-${VERSION}`;
 const BASEMAP_CACHE = `rain-radar-basemap-${VERSION}`;
 const MAX_BASEMAP_ENTRIES = 420;
@@ -67,7 +67,7 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(req.url);
 
-  // 1. JMA nowcast (tiles + JSONs): always go to network, never cache.
+  // 1. JMA rain data (nowcast/RASRF tiles + JSONs): always go to network, never cache.
   //    Data is time-sensitive; stale tiles would be misleading.
   if (url.hostname === 'www.jma.go.jp' && url.pathname.includes('/bosai/')) {
     return; // let browser handle directly

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="theme-color" content="#0a0e1a">
-<meta name="description" content="気象庁ナウキャストの雨雲レーダー。過去1時間〜予報1時間をスライダーで操作できます。">
+<meta name="description" content="気象庁ナウキャストと降水短時間予報の雨雲レーダー。過去1時間〜予報12時間をスライダーで操作できます。">
 <title>雨雲レーダー — 雨の在処</title>
 
 <!-- PWA -->
@@ -37,7 +37,7 @@
       </div>
       <div class="brand-text">
         <h1>雨の在処</h1>
-        <p class="brand-sub">Rain Radar / 気象庁ナウキャスト</p>
+        <p class="brand-sub">Rain Radar / Precision Mesh</p>
       </div>
     </div>
 
@@ -48,6 +48,12 @@
           <path d="M3 12a9 9 0 0 1 15.3-6.4"/>
           <path d="M18 3v4h-4"/>
           <path d="M6 21v-4h4"/>
+        </svg>
+      </button>
+      <button id="mesh-btn" class="icon-btn is-active" type="button" title="精度メッシュの表示切替" aria-label="精度メッシュを非表示" aria-pressed="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 4h16v16H4z"/>
+          <path d="M4 10h16M4 16h16M10 4v16M16 4v16"/>
         </svg>
       </button>
       <button id="locate-btn" class="icon-btn" type="button" title="現在地" aria-label="現在地に移動">
@@ -78,6 +84,14 @@
         <dt>最新実況</dt>
         <dd id="latest-observed">--:--</dd>
       </div>
+      <div>
+        <dt>予報範囲</dt>
+        <dd id="forecast-horizon">--</dd>
+      </div>
+      <div>
+        <dt>格子</dt>
+        <dd id="grid-resolution">--</dd>
+      </div>
     </dl>
   </aside>
 
@@ -107,6 +121,12 @@
         <div class="time-date" id="time-date">----/--/--</div>
         <div class="time-meta" id="frame-offset">現在から --分</div>
       </div>
+      <div class="range-tabs" role="group" aria-label="予報表示範囲">
+        <button type="button" data-range-hours="1">1h</button>
+        <button type="button" data-range-hours="6">6h</button>
+        <button type="button" data-range-hours="12" class="is-active" aria-pressed="true">12h</button>
+      </div>
+
       <div class="timeline-controls">
         <button id="jump-now" class="ctrl-btn ctrl-btn-text" type="button" aria-label="現在時刻の雨雲へ戻る">現在へ</button>
         <button id="step-back" class="ctrl-btn" type="button" aria-label="5分戻る">
@@ -127,12 +147,14 @@
         <div class="track-line"></div>
         <div class="track-now" id="track-now" aria-hidden="true">NOW</div>
         <div class="track-thumbs" id="track-thumbs"></div>
+        <div class="timeline-hourmarks" id="timeline-hourmarks"></div>
       </div>
       <div class="timeline-axis">
         <span>過去 1時間</span>
         <span>現在</span>
-        <span>予報 1時間</span>
+        <span id="forecast-axis">予報 12時間</span>
       </div>
+      <div class="source-note" id="source-note">1時間先までは高解像度、以降は降水短時間予報に切り替えます</div>
     </div>
   </section>
 
@@ -153,21 +175,23 @@
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="info-title">
       <button class="modal-close" data-close type="button" aria-label="閉じる">×</button>
       <h2 id="info-title">このアプリについて</h2>
-      <p>気象庁が公開しているナウキャストのタイル画像を地図に重ね、過去1時間〜予報1時間の降水強度をスライダーで時間移動・アニメーション再生できる雨雲レーダーです。</p>
+      <p>気象庁が公開している高解像度降水ナウキャストと降水短時間予報のタイル画像を地図に重ね、過去1時間〜予報12時間の降水分布をスライダーで時間移動・アニメーション再生できる雨雲レーダーです。精度メッシュは、現在表示しているデータの概算格子幅を地図上に重ねる補助表示です。</p>
 
       <h3>使い方</h3>
       <ul>
         <li><strong>スライダー</strong>を左右にドラッグして時刻を選択</li>
         <li><strong>▶ ボタン</strong>でアニメーション再生</li>
         <li><strong>現在へ</strong>で最新の実況時刻へ復帰</li>
+        <li><strong>1h / 6h / 12h</strong>で予報表示範囲を切替</li>
         <li><strong>↻ ボタン</strong>で雨雲データを再取得</li>
+        <li><strong>▦ ボタン</strong>で精度メッシュの表示を切替</li>
         <li><strong>◎ ボタン</strong>で現在地に移動</li>
       </ul>
 
       <h3>データ出典</h3>
-      <p>降水ナウキャスト・高解像度降水ナウキャスト：<a href="https://www.jma.go.jp/bosai/nowc/" target="_blank" rel="noopener">気象庁</a><br>背景地図：<a href="https://maps.gsi.go.jp/" target="_blank" rel="noopener">国土地理院 地理院タイル</a></p>
+      <p>降水ナウキャスト・高解像度降水ナウキャスト・降水短時間予報：<a href="https://www.jma.go.jp/bosai/nowc/" target="_blank" rel="noopener">気象庁</a> / <a href="https://www.jma.go.jp/bosai/kaikotan/" target="_blank" rel="noopener">今後の雨</a><br>背景地図：<a href="https://maps.gsi.go.jp/" target="_blank" rel="noopener">国土地理院 地理院タイル</a></p>
 
-      <p class="modal-foot">本アプリは参考情報の表示を目的としたものです。防災・業務判断・生命身体に関わる判断には使用しないでください。予報業務にあたる利用は禁じられています。詳しくは<a href="https://www.jma.go.jp/jma/kishou/info/coment.html" target="_blank" rel="noopener">気象庁HPの利用規約</a>を参照。</p>
+      <p class="modal-foot">本アプリは参考情報の表示を目的としたものです。精度メッシュは元データの格子幅を理解するための目安であり、降水確率を推定するものではありません。防災・業務判断・生命身体に関わる判断には使用しないでください。予報業務にあたる利用は禁じられています。詳しくは<a href="https://www.jma.go.jp/jma/kishou/info/coment.html" target="_blank" rel="noopener">気象庁HPの利用規約</a>を参照。</p>
     </div>
   </div>
 
